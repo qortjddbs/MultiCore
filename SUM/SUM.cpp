@@ -5,18 +5,20 @@
 
 constexpr int MAX_THREADS = 16;
 constexpr int TASK = 5000'0000;
-volatile int sum;		// volatile -> 컴파일러가 맘대로 최적화하지 못하게 함
-std::atomic<int> atomic_sum;	// atomic -> 원자적 연산을 보장
+volatile int sum;
+std::atomic <int> atomic_sum;
 std::mutex ll;
-volatile int array_sum[MAX_THREADS];
+constexpr int CACHE_LINE_SIZE = 64;
+constexpr int STRIDE = CACHE_LINE_SIZE / sizeof(int);
+volatile int array_sum[MAX_THREADS * STRIDE];
 
 void worker(const int NUM_THREADS)
 {
 	for (int i = 0; i < TASK / NUM_THREADS; ++i)
 	{
-		ll.lock();
-		sum = sum + 2;
-		ll.unlock();
+		//ll.lock();
+		sum += 2;
+		//ll.unlock();
 	}
 }
 
@@ -24,7 +26,8 @@ void atomic_worker(const int NUM_THREADS)
 {
 	for (int i = 0; i < TASK / NUM_THREADS; ++i)
 	{
-		atomic_sum.fetch_add(2);		// == atomic_sum += 2;
+		atomic_sum.fetch_add(2);
+		// atomic_sum += 2;
 	}
 }
 
@@ -42,106 +45,124 @@ void optimal_worker(const int NUM_THREADS)
 
 void array_worker(const int NUM_THREADS, const int THREAD_ID)
 {
-	
+	for (int i = 0; i < TASK / NUM_THREADS; ++i)
+	{
+		array_sum[THREAD_ID] = array_sum[THREAD_ID] + 2;
+	}
 }
 
-int main()
+void stride_array_worker(const int NUM_THREADS, const int THREAD_ID)
 {
+	for (int i = 0; i < TASK / NUM_THREADS; ++i)
 	{
-		auto start_t = std::chrono::high_resolution_clock::now();
-		for (auto i = 0; i < TASK; ++i)
-		{
-			sum = sum + 2;
-		}
-		auto end_t = std::chrono::high_resolution_clock::now();
-		auto exec_t = end_t - start_t;
-		std::cout << "Single Thread SUM : " << sum;
-		std::cout << ", Execution time: " << duration_cast<std::chrono::milliseconds>(exec_t).count() << " ms\n";
+		array_sum[THREAD_ID] = array_sum[THREAD_ID] + 2;
 	}
+}
+
+int main() {
+	using namespace std::chrono;
+	//char ch;
+	//std::cin >> ch;
 	{
-		std::cout << "------------------------------------------------------------------------\n";
-		sum = 0;
-		for (int i = 1; i <= MAX_THREADS; i *= 2)
+		auto start_t = high_resolution_clock::now();
+		for (auto i = 0; i < TASK; ++i)
+			sum = sum + 2;
+		auto end_t = high_resolution_clock::now();
+		auto exec_t = end_t - start_t;
+		std::cout << "Single Thread SUM = " << sum;
+		std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
+	}
+	std::cout << "----------------------------------------\n";
+	{
+		for (int num_threads = 1; num_threads <= MAX_THREADS; num_threads *= 2)
 		{
 			sum = 0;
-			auto start_t = std::chrono::high_resolution_clock::now();
+			auto start_t = high_resolution_clock::now();
 			std::thread threads[MAX_THREADS];
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j] = std::thread(worker, i);
-			}
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j].join();
-			}
-			auto end_t = std::chrono::high_resolution_clock::now();
+			for (int i = 0; i < num_threads; ++i)
+				threads[i] = std::thread(worker, num_threads);
+			for (int i = 0; i < num_threads; ++i)
+				threads[i].join();
+			auto end_t = high_resolution_clock::now();
 			auto exec_t = end_t - start_t;
-			std::cout << i << " Thread Lock SUM : " << sum;
-			std::cout << ", Execution time: " << duration_cast<std::chrono::milliseconds>(exec_t).count() << " ms\n";
+			std::cout << num_threads << " ThreadSUM = " << sum;
+			std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
 		}
 	}
+	std::cout << "----------------------------------------\n";
 	{
-		std::cout << "------------------------------------------------------------------------\n";
-		for (int i = 1; i <= MAX_THREADS; i *= 2)
+		for (int num_threads = 1; num_threads <= MAX_THREADS; num_threads *= 2)
 		{
 			atomic_sum = 0;
-			auto start_t = std::chrono::high_resolution_clock::now();
+			auto start_t = high_resolution_clock::now();
 			std::thread threads[MAX_THREADS];
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j] = std::thread(atomic_worker, i);
-			}
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j].join();
-			}
-			auto end_t = std::chrono::high_resolution_clock::now();
+			for (int i = 0; i < num_threads; ++i)
+				threads[i] = std::thread(atomic_worker, num_threads);
+			for (int i = 0; i < num_threads; ++i)
+				threads[i].join();
+			auto end_t = high_resolution_clock::now();
 			auto exec_t = end_t - start_t;
-			std::cout << i << " Thread Atomic SUM : " << atomic_sum;
-			std::cout << ", Execution time: " << duration_cast<std::chrono::milliseconds>(exec_t).count() << " ms\n";
+			std::cout << num_threads << " Thread Atomic SUM = " << atomic_sum;
+			std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
 		}
 	}
+	std::cout << "----------------------------------------\n";
 	{
-		std::cout << "------------------------------------------------------------------------\n";
-		for (int i = 1; i <= MAX_THREADS; i *= 2)
+		for (int num_threads = 1; num_threads <= MAX_THREADS; num_threads *= 2)
 		{
 			sum = 0;
-			auto start_t = std::chrono::high_resolution_clock::now();
+			auto start_t = high_resolution_clock::now();
 			std::thread threads[MAX_THREADS];
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j] = std::thread(optimal_worker, i);
-			}
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j].join();
-			}
-			auto end_t = std::chrono::high_resolution_clock::now();
+			for (int i = 0; i < num_threads; ++i)
+				threads[i] = std::thread(optimal_worker, num_threads);
+			for (int i = 0; i < num_threads; ++i)
+				threads[i].join();
+			auto end_t = high_resolution_clock::now();
 			auto exec_t = end_t - start_t;
-			std::cout << i << " Thread Optimal SUM : " << sum;
-			std::cout << ", Execution time: " << duration_cast<std::chrono::milliseconds>(exec_t).count() << " ms\n";
+			std::cout << num_threads << " Thread Optimal SUM = " << sum;
+			std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
 		}
 	}
+
+	std::cout << "---------------- ARRAY ------------------------\n";
 	{
-		std::cout << "------------------------------------------------------------------------\n";
-		for (int i = 1; i <= MAX_THREADS; i *= 2)
+		for (int num_threads = 1; num_threads <= MAX_THREADS; num_threads *= 2)
 		{
 			sum = 0;
 			for (auto& s : array_sum) s = 0;
-			auto start_t = std::chrono::high_resolution_clock::now();
+			auto start_t = high_resolution_clock::now();
 			std::thread threads[MAX_THREADS];
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j] = std::thread(array_worker, i, j);
-			}
-			for (int j = 0; j < i; ++j)
-			{
-				threads[j].join();
-			}
-			auto end_t = std::chrono::high_resolution_clock::now();
+			for (int i = 0; i < num_threads; ++i)
+				threads[i] = std::thread(array_worker, num_threads, i);
+			for (int i = 0; i < num_threads; ++i)
+				threads[i].join();
+			for (int i = 0; i < num_threads; ++i)
+				sum += array_sum[i];
+			auto end_t = high_resolution_clock::now();
 			auto exec_t = end_t - start_t;
-			std::cout << i << " Thread Array SUM : " << sum;
-			std::cout << ", Execution time: " << duration_cast<std::chrono::milliseconds>(exec_t).count() << " ms\n";
+			std::cout << num_threads << " Thread Optimal SUM = " << sum;
+			std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
+		}
+	}
+
+	std::cout << "---------------- ARRAY STRIDE ------------------------\n";
+	{
+		for (int num_threads = 1; num_threads <= MAX_THREADS; num_threads *= 2)
+		{
+			sum = 0;
+			for (auto& s : array_sum) s = 0;
+			auto start_t = high_resolution_clock::now();
+			std::thread threads[MAX_THREADS];
+			for (int i = 0; i < num_threads; ++i)
+				threads[i] = std::thread(stride_array_worker, num_threads, i);
+			for (int i = 0; i < num_threads; ++i)
+				threads[i].join();
+			for (int i = 0; i < num_threads; ++i)
+				sum += array_sum[i * STRIDE];
+			auto end_t = high_resolution_clock::now();
+			auto exec_t = end_t - start_t;
+			std::cout << num_threads << " Thread ARRAY STRIDE SUM = " << sum;
+			std::cout << ",  Execution time: " << duration_cast<milliseconds>(exec_t).count() << " ms\n";
 		}
 	}
 }

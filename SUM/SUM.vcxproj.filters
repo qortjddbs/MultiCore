@@ -18,5 +18,8 @@
     <ClCompile Include="SUM.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="SUM_me.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
