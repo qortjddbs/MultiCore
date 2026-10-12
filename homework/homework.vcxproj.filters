@@ -21,5 +21,14 @@
     <ClCompile Include="fine-grained.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="optimistic.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="lazy.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="lock_free.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

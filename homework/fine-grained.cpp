@@ -15,10 +15,10 @@ public:
 	void Unlock() { mtx.unlock(); }
 };
 
-class C_SET {
+class F_SET {
 public:
 	NODE* head, * tail;
-	C_SET()
+	F_SET()
 	{
 		std::cout << "Creating Fine-Grained SET\n\n";
 		head = new NODE(std::numeric_limits<int>::min());
@@ -126,7 +126,7 @@ constexpr int TASK = 400'0000;
 constexpr int RANGE = 1000;
 
 
-C_SET mt_set;
+F_SET mt_set;
 
 void benchmark(const int NUM_THREADS)
 {
