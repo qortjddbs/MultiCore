@@ -7,7 +7,7 @@
 
 constexpr int MAX_THREADS = 64;
 constexpr int TASK = 400'0000;
-constexpr int RANGE = 1000;
+constexpr int RANGE = 100;
 
 class NODE {
 public:
@@ -651,7 +651,9 @@ class LF_NODE {
 public:
 	int value;
 	LFPTR next;
-	LF_NODE(int v) : value(v), next(0) {}
+	int epoch;
+
+	LF_NODE(int v) : value(v), next(0), epoch(0) {}
 };
 
 class LF_SET {
@@ -719,7 +721,7 @@ public:
 			return true;
 		}
 	}
-	bool Contains(int v)		// wait-free
+	bool Contains(int v)		// wait-free : 딴 스레드랑 충돌했을 때 딜레이되는 게 없음
 	{
 		LF_NODE* curr = head;
 		while (curr->value < v)
@@ -749,7 +751,163 @@ public:
 	}
 };
 
-LF_SET mt_set;
+class EBR {
+private:
+	std::atomic<int> epoch;
+	std::queue<LF_NODE*> memory_pool[MAX_THREADS];
+	std::atomic<int> epoch_counter[MAX_THREADS];
+public:
+	EBR() : epoch(0)
+	{
+		for (auto& c : epoch_counter)
+			c = 0;
+	}
+	~EBR() {
+		for (auto& p : memory_pool) {
+			while (!p.empty()) {
+				delete p.front();
+				p.pop();
+			}
+		}
+	}
+
+	LF_NODE* get_node(int value) {
+		if (memory_pool[thread_id].empty())
+			return new LF_NODE(value);
+		else {
+			// 안전한가 아닌가 검사한 다음에 꺼내야 한다.
+			LF_NODE* node = memory_pool[thread_id].front();
+			memory_pool[thread_id].pop();
+			node->value = value;
+			node->next.set_ptr(nullptr);
+			return node;
+		}
+	}
+	void free_node(LF_NODE* node) {
+		node->epoch = epoch;
+		memory_pool[thread_id].push(node);
+	}
+	void enter() {
+		epoch_counter[thread_id] = epoch.load();
+	}
+	void leave() {
+		epoch_counter[thread_id] = 0;
+	}
+};
+
+class EBR_LF_SET {
+public:
+	LF_NODE* head, * tail;
+	EBR_LF_SET()
+	{
+		std::cout << "Creating EBR Lock Free SET\n";
+		head = new LF_NODE(std::numeric_limits<int>::min());
+		tail = new LF_NODE(std::numeric_limits<int>::max());
+		head->next.set_ptr(tail);
+	}
+
+	void Find(int v, LF_NODE*& pred, LF_NODE*& curr)
+	{
+		while (true) {
+		retry:
+			pred = head;
+			curr = head->next.get_ptr();
+			while (true) {
+				LF_NODE* succ;
+				bool removed = curr->next.get_mark(succ);
+				while (true == removed) {
+					if (false == pred->next.CAS(curr, succ, false, false)) goto retry;
+					ebr.free_node(curr);
+					curr = succ;
+					removed = curr->next.get_mark(succ);
+				}
+				if (curr->value >= v) return;
+				pred = curr;
+				curr = succ;
+			}
+			return;
+		}
+	}
+
+	bool Add(int v)
+	{
+		ebr.enter();
+
+		while (true) {
+			LF_NODE* pred;
+			LF_NODE* curr;
+			Find(v, pred, curr);
+
+			if (curr->value == v) {
+				ebr.leave();
+				return false;
+			}
+			else
+			{
+				LF_NODE* node = ebr.get_node(v);
+				node->next.set_ptr(curr);			// 아직 비공개 -> set_ptr 가능
+				if (true == pred->next.CAS(curr, node, false, false))
+					ebr.leave();
+					return true;
+				ebr.free_node(node);						// 같은 이유로 아직 비공개 -> delete 가능
+			}
+		}
+	}
+	bool Remove(int v)
+	{
+		ebr.enter();
+		while (true) {
+			LF_NODE* pred; LF_NODE* curr;
+			Find(v, pred, curr);
+			if (curr->value != v) {
+				ebr.leave();
+				return false;
+			}
+			LF_NODE* succ = curr->next.get_ptr();
+			if (false == curr->next.CAS(succ, succ, false, true)) continue;
+			if (true == pred->next.CAS(curr, succ, false, false))
+				ebr.free_node(curr);
+			ebr.leave();
+			return true;
+		}
+	}
+	bool Contains(int v)		// wait-free : 딴 스레드랑 충돌했을 때 딜레이되는 게 없음
+	{
+		ebr.enter();
+		LF_NODE* curr = head;
+		while (curr->value < v)
+			curr = curr->next.get_ptr();
+		volatile bool result = (curr->value == v) && (false == curr->next.get_mark());
+		ebr.leave();
+		return result;
+	}
+	void Clear()
+	{
+		LF_NODE* curr = head->next.get_ptr();
+		while (curr != tail)
+		{
+			LF_NODE* temp = curr;
+			curr = curr->next.get_ptr();
+			delete temp;
+		}
+		head->next.set_ptr(tail);
+	}
+	void Print()
+	{
+		LF_NODE* curr = head->next.get_ptr();
+		for (int i = 0; i < 20 && curr != tail; i++)
+		{
+			std::cout << curr->value << ", ";
+			curr = curr->next.get_ptr();
+		}
+		std::cout << std::endl;
+	}
+};
+
+EBR ebr;
+thread_local int thread_id = 999;
+
+EBR_LF_SET mt_set;
 
 class HISTORY {
 public:
