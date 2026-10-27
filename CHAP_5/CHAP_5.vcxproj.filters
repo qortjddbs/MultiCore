@@ -21,5 +21,8 @@
     <ClCompile Include="LAZY.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="LF_UNIV SET.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
