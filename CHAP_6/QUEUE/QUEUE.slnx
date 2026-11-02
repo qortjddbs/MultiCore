@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="QUEUE.vcxproj" />
+  <Project Path="QUEUE.vcxproj" Id="10fe8e3c-7576-411f-b11e-146f72ba2bc3" />
 </Solution>

@@ -4,8 +4,8 @@
 #include <chrono>
 #include <array>
 #include <queue>
-constexpr int MAX_THREADS = 64;
-constexpr int TASK = 400'0000;
+constexpr int MAX_THREADS = 32;
+constexpr int TASK = 2'0000;
 constexpr int RANGE = 1000;
 
 class NODE {
@@ -1049,6 +1049,8 @@ public:
 	}
 };
 
+class U_NODE;
+
 class CONSENSUS {
 	U_NODE* m_decide;
 public:
@@ -1070,6 +1072,7 @@ public:
 	int m_seq;
 	U_NODE* volatile next;
 	CONSENSUS m_decidenext;
+	U_NODE() : m_seq(0), next(nullptr) {}
 	U_NODE(INVOCATION inv) : m_inv(inv), m_seq(0), next(nullptr) {}
 };
 
@@ -1116,7 +1119,7 @@ public:
 
 	RESPONSE apply(INVOCATION& inv)
 	{
-		U_NODE* prefer = new U_NODE{ inv, 0, nullptr };
+		U_NODE* prefer = new U_NODE{ inv };
 		while (0 == prefer->m_seq) {
 			U_NODE* head = get_max_head();
 			long long temp = 0;
@@ -1139,8 +1142,102 @@ public:
 	}
 };
 
+class OPT_LFUNV_OBJECT {
+	struct alignas(64) LOCAL { SEQOBJECT obj; U_NODE* last; };		// 스레드별 복사본 + 커서, 64바이트씩
+	LOCAL m_local[MAX_THREADS];
+	U_NODE tail;													// SEQ_OBJECT의 최신 상태를 LOG 형식으로 저장
+public:
+	OPT_LFUNV_OBJECT() {
+		tail.m_seq = 0;
+		tail.next = nullptr;
+		for (auto& l : m_local) l.last = &tail;
+	}
+	void clear()
+	{
+		U_NODE* p = tail.next;
+		while (nullptr != p) {
+			U_NODE* old_p = p;
+			p = p->next;
+			delete old_p;
+		}
+		tail.next = nullptr;
+		for (auto& l : m_local) { l.obj.clear(); l.last = &tail; }
+	}
 
-STD_SEQ_SET mt_set;
+	void print20()
+	{
+		SEQOBJECT std_set;
+		U_NODE* p = tail.next;
+		while (p != nullptr) {
+			std_set.apply(p->m_inv);
+			p = p->next;
+		}
+		INVOCATION inv{ M_PRINT20, 0 };
+		std_set.apply(inv);
+	}
+
+	RESPONSE apply(INVOCATION& inv)
+	{
+		LOCAL& me = m_local[thread_id];		// 반드시 & (참조). 빠뜨리면 set을 매번 복사해서 엄청 느려지고 결과도 틀림
+		U_NODE* node = nullptr;
+
+		while (true) {
+			while (me.last->next != nullptr) { me.last = me.last->next; me.obj.apply(me.last->m_inv); }
+
+			INVOCATION q{ M_CONTAINS, inv.x }; bool has = me.obj.apply(q).m_bool;
+
+			if (inv.m_method == M_CONTAINS) return RESPONSE{ has };
+
+			if ((inv.m_method == M_ADD && has) || (inv.m_method == M_REMOVE && !has)) { delete node; return RESPONSE{ false }; }
+
+			if (node == nullptr) node = new U_NODE{ inv };
+			long long temp = 0;		// 반드시 루프 안에서 매번 0으로 선언
+
+			if (std::atomic_compare_exchange_strong(
+				reinterpret_cast<volatile std::atomic_llong*>(&me.last->next),
+				&temp,
+				reinterpret_cast<long long>(node))) {
+				me.last = node;
+				return me.obj.apply(inv);
+			}
+		}
+	}
+};
+
+class LF_UNIV_SET {
+	OPT_LFUNV_OBJECT m_set;
+public:
+	LF_UNIV_SET()
+	{}
+	void Clear()
+	{
+		INVOCATION inv{ M_CLEAR, 0 };
+		m_set.clear();
+	}
+	bool Add(int x)
+	{
+		INVOCATION inv{ M_ADD, x };
+		return m_set.apply(inv).m_bool;
+	}
+	bool Remove(int x)
+	{
+		INVOCATION inv{ M_REMOVE, x };
+		return m_set.apply(inv).m_bool;
+	}
+	bool Contains(int x)
+	{
+		INVOCATION inv{ M_CONTAINS, x };
+		return m_set.apply(inv).m_bool;
+
+	}
+	void Print()
+	{
+		INVOCATION inv{ M_PRINT20, 0 };
+		m_set.print20();
+	}
+};
+
+LF_UNIV_SET mt_set;
 
 class HISTORY {
 public:
@@ -1252,7 +1349,7 @@ void benchmark(const int NUM_THREADS, int th_id)
 
 int main() {
 	using namespace std::chrono;
-
+	thread_id = 0;
 
 	std::cout << "\nStarting Error Check\n";
 	{
