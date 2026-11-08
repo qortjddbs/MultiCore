@@ -2,7 +2,7 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
-constexpr int MAX_THREADS = 64;
+constexpr int MAX_THREADS = 8;
 constexpr int TASK = 1000'0000;
 
 class NODE {
